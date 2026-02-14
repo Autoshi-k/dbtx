@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
@@ -32,8 +31,8 @@ type Selectable interface {
 	Table() string
 }
 
-func NewDatabaseConnection() ConnectionI {
-	conn, err := sql.Open("pgx", os.Getenv("PG_CONN"))
+func NewDatabaseConnection(connectionURI string) ConnectionI {
+	conn, err := sql.Open("pgx", connectionURI)
 	if err != nil {
 		panic("failed connecting to db" + err.Error())
 	}
