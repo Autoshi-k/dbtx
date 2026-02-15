@@ -9,29 +9,14 @@ import (
 	"go.uber.org/zap"
 )
 
-type ConnectionI interface {
-	InsertOne(ctx context.Context, target Insertable) (int, error)
-	InsertMany(ctx context.Context, target MultiInsertable) (int, error) // todo what about ids D':
-	SelectOne(ctx context.Context, target Selectable, cdn map[string]any) error
-	SelectMany(ctx context.Context, target Selectable, cdn map[string]any) error
+type DBI interface {
+	Exec(ctx context.Context, query string, args ...any) (sql.Result, error)
+	Query(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRow(ctx context.Context, query string, args ...any) *sql.Row
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-type Insertable interface {
-	Table() string
-}
-
-type MultiInsertable interface {
-	Table() string
-	GetFirstItem() any
-	GetItems() []any
-	Len() int
-}
-
-type Selectable interface {
-	Table() string
-}
-
-func NewDatabaseConnection(connectionURI string) ConnectionI {
+func NewDatabaseConnection(connectionURI string) DBI {
 	conn, err := sql.Open("pgx", connectionURI)
 	if err != nil {
 		panic("failed connecting to db" + err.Error())
@@ -43,94 +28,69 @@ func NewDatabaseConnection(connectionURI string) ConnectionI {
 	}
 
 	logger.Named("db-test") // todo probably need to create a wrapper
-	return Something{
+	return &DB{
 		conn:   conn,
 		logger: logger,
 	}
 }
 
-type Something struct {
+type DB struct {
 	conn   *sql.DB
 	logger *zap.Logger
 }
 
-func (db Something) InsertOne(ctx context.Context, target Insertable) (int, error) {
-	m, _, err := structToDBMap(target)
+func (db *DB) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	startLog, endLog, errLog := db.logs(ctx, "Exec", query, args...)
+	defer endLog()
+	startLog()
+
+	res, err := db.conn.ExecContext(ctx, query, args...)
 	if err != nil {
-		return 0, err
+		errLog(err)
 	}
-
-	query, args := buildInsert(target.Table(), m)
-
-	//fmt.Printf("query: %s, args: %s\n", query, args)
-
-	_, err = db.conn.ExecContext(ctx, query, args...)
-	if err != nil {
-		fmt.Println("ExecContext err", err.Error())
-		return 0, err
-	}
-
-	return 0, nil
+	return res, err
 }
 
-func (db Something) InsertMany(ctx context.Context, target MultiInsertable) (int, error) {
-	db.logger.Debug("InsertMany start", zap.Any("target", target))
-	values, columns, err := structDataToDBMap(target)
-	if err != nil {
-		return 0, err
-	}
-	query, args := buildInsertMany(target.Table(), columns, values)
-	db.logger.Debug("InsertMany will execute", zap.String("query", query), zap.Any("values", values))
+func (db *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	startLog, endLog, errLog := db.logs(ctx, "Query", query, args...)
+	defer endLog()
+	startLog()
 
-	_, err = db.conn.ExecContext(ctx, query, args...)
+	res, err := db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		db.logger.Debug("InsertMany failed execute", zap.Any("err", err))
-		return 0, fmt.Errorf("insertMany - failed executing query for %v\nquery: %s\narguments: %s\nerr: %w", target, query, args, err)
+		errLog(err)
 	}
-
-	//id, err := result.LastInsertId()
-	//if err != nil {
-	//	return 0, fmt.Errorf("insertMany - failed getting last insert id for %v\nquery: %s\narguments: %s\nerr: %w", target, query, args, err)
-	//}
-	db.logger.Debug("InsertMany end", zap.Any("target", target))
-	return 0, nil
+	return res, err
 }
 
-func (db Something) SelectOne(ctx context.Context, target Selectable, cdn map[string]any) error {
-	m, _, err := structToDBMap(target)
-	if err != nil {
-		return err
-	}
+func (db *DB) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
+	startLog, endLog, _ := db.logs(ctx, "Query", query, args...)
+	defer endLog()
+	startLog()
 
-	query := buildSelect(target.Table(), m, cdn)
-
-	result := db.conn.QueryRowContext(ctx, query)
-
-	err = ScanRow(result, target)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	res := db.conn.QueryRowContext(ctx, query, args...)
+	return res
 }
 
-func (db Something) SelectMany(ctx context.Context, target Selectable, cdn map[string]any) error {
-	m, _, err := structToDBMap(target)
-	if err != nil {
-		return err
+func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	panic("not implemented")
+}
+
+func (db *DB) logs(ctx context.Context, method, query string, args ...any) (startLog func(), endLog func(), errLog func(error)) {
+	logValues := []zap.Field{
+		zap.String("method", method),
+		zap.String("context-id", fmt.Sprint(ctx.Value("uuid"))),
+		zap.String("query", query),
+		zap.Any("args", args),
 	}
-
-	query := buildSelect(target.Table(), m, cdn)
-
-	result, err := db.conn.QueryContext(ctx, query)
-	if err != nil {
-		return err
+	startLog = func() {
+		db.logger.Sugar().Info("start", logValues)
 	}
-
-	err = result.Scan(target)
-	if err != nil {
-		return err
+	endLog = func() {
+		db.logger.Sugar().Info("end", logValues)
 	}
-
-	return nil
+	errLog = func(err error) {
+		db.logger.Sugar().Errorln("err", logValues, zap.Error(err))
+	}
+	return
 }
