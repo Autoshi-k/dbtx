@@ -7,6 +7,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type DBI interface {
@@ -77,20 +78,23 @@ func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
 func (db *DB) logs(ctx context.Context, method, query string, args ...any) (startLog func(), endLog func(), errLog func(error)) {
-	logValues := []zap.Field{
+	baseLogValues := []zapcore.Field{
 		zap.String("method", method),
 		zap.String("context-id", fmt.Sprint(ctx.Value("uuid"))),
+	}
+
+	extraValues := []zap.Field{
 		zap.String("query", query),
 		zap.Any("args", args),
 	}
 	startLog = func() {
-		db.logger.Sugar().Info("start", logValues)
+		db.logger.Sugar().Info("start", baseLogValues, extraValues)
 	}
 	endLog = func() {
-		db.logger.Sugar().Info("end", logValues)
+		db.logger.Sugar().Info("end", baseLogValues)
 	}
 	errLog = func(err error) {
-		db.logger.Sugar().Errorln("err", logValues, zap.Error(err))
+		db.logger.Sugar().Errorln("err", baseLogValues, extraValues, zap.Error(err))
 	}
 	return
 }
