@@ -65,7 +65,7 @@ func (db *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, 
 }
 
 func (db *DB) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
-	startLog, endLog, _ := db.logs(ctx, "Query", query, args...)
+	startLog, endLog, _ := db.logs(ctx, "QueryRow", query, args...)
 	defer endLog()
 	startLog()
 
